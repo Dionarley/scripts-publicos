@@ -1,1 +1,1 @@
-eval "$(curl -fsSL https://raw.githubusercontent.com/Dionarley/fire-git/main/firegit.sh)"
+eval "$(wget -qO- https://raw.githubusercontent.com/Dionarley/fire-git/main/firegit.sh)"
