@@ -1,42 +1,71 @@
 #!/bin/bash
 
-# Nome do arquivo de saída com data
-ARQUIVO="diagnostico_$(date +%Y%m%d_%H%M%S).txt"
+# 1. Verificar se o usuário é root (necessário para instalar pacotes e ler hardware)
+if [ "$EUID" -ne 0 ]; then 
+  echo "Por favor, execute como root (use sudo ./nome_do_script.sh)"
+  exit 1
+fi
 
-echo "======================================================" > "$ARQUIVO"
-echo "RELATÓRIO DE DIAGNÓSTICO DO SISTEMA - $(date)" >> "$ARQUIVO"
-echo "======================================================" >> "$ARQUIVO"
+# 2. Mapeamento de comandos para pacotes
+declare -A DEPS=( ["smartctl"]="smartmontools" ["lsb_release"]="lsb-release" ["free"]="procps" ["ip"]="iproute2" ["lsblk"]="util-linux" )
+FALTANDO=()
 
-# 1. Informações do Sistema Operacional
-echo -e "\n[1. SISTEMA OPERACIONAL]" >> "$ARQUIVO"
-lsb_release -a 2>/dev/null >> "$ARQUIVO"
-echo "Kernel: $(uname -r)" >> "$ARQUIVO"
-echo "Uptime: $(uptime -p)" >> "$ARQUIVO"
+echo "--- Iniciando Verificação de Dependências ---"
 
-# 2. Hardware: CPU e Memória
-echo -e "\n[2. CPU E MEMÓRIA]" >> "$ARQUIVO"
-echo "Modelo CPU: $(grep -m 1 'model name' /proc/cpuinfo | cut -d: -f2)" >> "$ARQUIVO"
-free -h >> "$ARQUIVO"
-
-# 3. Armazenamento e Saúde do Disco
-echo -e "\n[3. ARMAZENAMENTO E DISCO]" >> "$ARQUIVO"
-df -h | grep '^/dev/' >> "$ARQUIVO"
-echo -e "\n--- Status S.M.A.R.T. ---" >> "$ARQUIVO"
-# Lista todos os discos e checa a saúde simplificada
-for disco in $(lsblk -dno NAME | grep -E 'sd|nvme'); do
-    echo "Disco /dev/$disco:" >> "$ARQUIVO"
-    sudo smartctl -H /dev/$disco | grep "result" >> "$ARQUIVO" || echo "S.M.A.R.T. não suportado" >> "$ARQUIVO"
+for cmd in "${!DEPS[@]}"; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "Ferramenta '$cmd' não encontrada. Preparando instalação de '${DEPS[$cmd]}'."
+        FALTANDO+=("${DEPS[$cmd]}")
+    fi
 done
 
-# 4. Rede
-echo -e "\n[4. REDE]" >> "$ARQUIVO"
-ip -brief addr >> "$ARQUIVO"
-echo "Gateway: $(ip route | grep default | awk '{print $3}')" >> "$ARQUIVO"
+# 3. Instalação automática se houver algo faltando
+if [ ${#FALTANDO[@]} -ne 0 ]; then
+    echo "Instalando dependências: ${FALTANDO[*]}..."
+    apt update -qq && apt install -y "${FALTANDO[@]}" -qq
+    echo "Dependências instaladas com sucesso."
+else
+    echo "Todas as ferramentas já estão presentes."
+fi
 
-# 5. Top 5 Processos que mais consomem memória
-echo -e "\n[5. TOP 5 PROCESSOS (MEMÓRIA)]" >> "$ARQUIVO"
-ps aux --sort=-%mem | head -n 6 >> "$ARQUIVO"
+# --- 4. Geração do Relatório ---
 
-echo -e "\n======================================================" >> "$ARQUIVO"
-echo "Fim do Relatório. Arquivo gerado: $ARQUIVO"
-echo "======================================================"
+ARQUIVO="diagnostico_$(date +%Y%m%d_%H%M%S).txt"
+
+{
+    echo "======================================================"
+    echo "RELATÓRIO COMPLETO DE SISTEMA - $(date)"
+    echo "======================================================"
+
+    echo -e "\n[1. INFO DO SISTEMA]"
+    lsb_release -d | cut -f2
+    echo "Kernel: $(uname -r)"
+    echo "Tempo de atividade: $(uptime -p)"
+
+    echo -e "\n[2. RECURSOS (CPU/RAM)]"
+    echo "Modelo CPU: $(grep -m 1 'model name' /proc/cpuinfo | cut -d: -f2)"
+    free -h
+
+    echo -e "\n[3. SAÚDE FÍSICA DOS DISCOS (S.M.A.R.T.)]"
+    for disco in $(lsblk -dno NAME | grep -E 'sd|nvme'); do
+        echo "--- Disco /dev/$disco ---"
+        smartctl -H /dev/"$disco" | grep "result" || echo "Status: Não disponível."
+        # Adiciona a temperatura se disponível
+        smartctl -A /dev/"$disco" | grep -i "Temperature" | awk '{print "Temperatura: " $2 " " $10}' || true
+    done
+
+    echo -e "\n[4. USO DE DISCO (PARTIÇÕES)]"
+    df -h -x tmpfs -x devtmpfs
+
+    echo -e "\n[5. REDE E CONECTIVIDADE]"
+    ip -brief addr
+    echo "Teste de Ping (Google DNS):"
+    ping -c 2 8.8.8.8 > /dev/null && echo "Internet: OK" || echo "Internet: FALHA"
+
+    echo -e "\n[6. PROCESSOS QUE MAIS CONSOMEM]"
+    ps aux --sort=-%mem | head -n 6
+
+    echo "======================================================"
+} > "$ARQUIVO"
+
+echo -e "\nPronto! O diagnóstico foi salvo em: **$ARQUIVO**"
