@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
 
 # 1. Verificar se o usuário é root (necessário para instalar pacotes e ler hardware)
 if [ "$EUID" -ne 0 ]; then 
