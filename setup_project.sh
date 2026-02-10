@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 git init
 
 # Cria um arquivo .gitignore e adiciona um conteúdo básico
